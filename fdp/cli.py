@@ -1,21 +1,79 @@
 from pathlib import Path
-import sys
+import os
+import toml
 
 import click
 
 from fdp.services import registry_installed, registry_running, download_data
+from fdp.staging import Staging
+
+from typing import List
 
 
 @click.group()
 def cli():
     """Welcome to the FAIR data pipeline command-line interface."""
-    if registry_installed() and registry_running():
-        click.echo(f"Local registry installed and running")
-    else:
-        click.echo(f"You do not have a local registry running. Please see "
-                   "https://scottishcovidresponse.github.io/docs/data_pipeline/local_registry/"
-                   "for information on how to install and run a local registry.")
-        sys.exit(1)
+    # if registry_installed() and registry_running():
+    #     click.echo("Local registry installed and running")
+    # else:
+    #     click.echo(
+    #         "You do not have a local registry running. Please see "
+    #         "https://scottishcovidresponse.github.io/docs/data_pipeline/local_registry/"
+    #         "for information on how to install and run a local registry."
+    #     )
+    #     sys.exit(1)
+    pass
+
+
+@cli.command()
+def status() -> None:
+    """
+    Get the status of staging
+    """
+    with Staging() as s:
+        s.status()
+
+
+@cli.command()
+def purge() -> None:
+    _purge = click.prompt(
+        "Are you sure you want to reset fdp tracking, "
+        "this is not reversible [Y/N]? ",
+        type=click.BOOL
+    )
+    if _purge:
+        if not os.path.exists(os.path.join(Path.home(), '.scrc', '.fdp_staging')):
+            click.echo('No fdp tracking has been initialised')
+        else:
+            os.remove(os.path.join(Path.home(), '.scrc', '.fdp_staging'))
+
+@cli.command()
+@click.argument('file_paths', type=click.Path(exists=True), nargs=-1)
+def reset(file_paths: List[str]) -> None:
+    with Staging() as s:
+        for file_name in file_paths:
+            s.change_staging_state(file_name, False)
+
+
+@cli.command()
+@click.argument('file_paths', type=click.Path(exists=True), nargs=-1)
+def add(file_paths: List[str]) -> None:
+    with Staging() as s:
+        for file_name in file_paths:
+            s.change_staging_state(file_name, True)
+
+
+@cli.command()
+@click.argument('file_paths', type=click.Path(exists=True), nargs=-1)
+@click.option(
+    '--cached/--not-cached',
+    default=False,
+    help='remove from tracking but do not delete from file system'
+)
+def rm(file_paths: List[str], cached: bool = False) -> None:
+    with Staging() as s:
+        for file_name in file_paths:
+            s.remove_file(file_name, cached)
 
 
 @cli.command()
@@ -65,9 +123,20 @@ def run(config: str):
     click.echo(f"run command called with config {config}")
 
 
+@cli.group()
+def remote():
+    pass
+
+
+@remote.command()
+@click.argument('label')
+def add(label: str = 'origin') -> None:
+    pass
+
+
 @cli.command()
 @click.argument("api-token")
-def push(api_token):
+def push(api_token: str):
     """
     push new files (generated from write: and register:) to the remote data store
 
@@ -85,22 +154,40 @@ def push(api_token):
     # requests.put('https://data.scrc.uk/api/object/', data, headers=headers)
 
 
-@cli.command()
-def status():
-    """
-    Report on overall sync status of registry.
-    """
-    click.echo(f"status command called")
+@cli.group()
+def config():
+    pass
 
-
-@cli.command()
-@click.argument("user_name")
-def config_user(user_name):
+@config.command(name='user.name')
+@click.argument('user_name')
+def config_user(user_name: str) -> None:
     """
-    TODO: should update a user file in .scrc containing user information (API token, associated namespace, local data
-          store, login node, and so on).
+    TODO: should update a user file in .scrc containing user information
+    (API token, associated namespace, local data
+    store, login node, and so on).
     """
-    click.echo(f"config command called")
     user_home = Path.home()
-    scrc_user_dir = user_home.joinpath(f".scrc/.users/{user_name}")
+    scrc_user_config = os.path.join(user_home, '.scrc', 'config')
+    if not os.path.exists(scrc_user_config):
+        u_config = {}
+    else:
+        u_config = toml.load(scrc_user_config)
+    if 'user' not in u_config:
+        u_config['user'] = {}
+    u_config['user']['name'] = user_name
+    user_home = Path.home()
+    scrc_user_dir = os.path.join(user_home, ".scrc", "users", user_name)
     scrc_user_dir.mkdir(parents=True, exist_ok=True)
+
+@config.command(name='user.email')
+@click.argument('user_email')
+def config_email(user_email: str) -> None:
+    user_home = Path.home()
+    scrc_user_config = os.path.join(user_home, '.scrc', 'fdpconfig')
+    if not os.path.exists(scrc_user_config):
+        u_config = {}
+    else:
+        u_config = toml.load(scrc_user_config)
+    if 'user' not in u_config:
+        u_config['email'] = {}
+    u_config['user']['email'] = user_email
